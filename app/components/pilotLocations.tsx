@@ -29,6 +29,7 @@ const PilotLocations = () => {
   const [bandwidth, setBandwidth] = useState(1.4);
   const { subcarriers, fftSize } = bandwidthToSubcarriers(bandwidth);
   const [results, setResults] = useState<any[]>([]);
+  const [pilotMatrix, setPilotMatrix] = useState<number[][]>([]);
 
   const generatePilotMatrix = (
     pci: number,
@@ -40,31 +41,61 @@ const PilotLocations = () => {
     const matrix: number[][] = Array.from({ length: totalSubcarriers }, () =>
       Array(cols).fill(0)
     );
-
-    const port0Symbols = [0, 4, 7, 11];
-    const port1Symbols = [0, 4, 7, 11];
-    const port2Symbols = [1, 8];
-    const port3Symbols = [1, 8];
-
-    for (let r = 0; r < totalSubcarriers; r++) {
-      for (let c = 0; c < cols; c++) {
-        const condition =
-          (antennaPort === 0 && port0Symbols.includes(c) && r % 6 === vShift) ||
-          (antennaPort === 1 && port1Symbols.includes(c) && r % 6 === (3 + vShift) % 6) ||
-          (antennaPort === 2 && port2Symbols.includes(c) && r % 6 === vShift) ||
-          (antennaPort === 3 && port3Symbols.includes(c) && r % 6 === (3 + vShift) % 6);
-
-        if (condition) {
-          matrix[r][c] = 1;
+  
+    // Define which symbols are used for each antenna port
+    const symbolIndices = {
+      0: [0, 4, 7, 11],
+      1: [0, 4, 7, 11],
+      2: [1, 8],
+      3: [1, 8],
+    };
+  
+    // Define corresponding vertical shift offsets for pilot mapping
+    const symbolOffsets = {
+      0: [0, 3],  // symbol 0, 4
+      1: [3, 0],  // symbol 0, 4
+      2: [0, 3],  // symbol 1, 8
+      3: [3, 0],  // symbol 1, 8
+    };
+  
+    const isPortWithCopy = antennaPort === 0 || antennaPort === 1;
+  
+    if (isPortWithCopy) {
+      // For ports 0 & 1, align symbol 7 with 0, and 11 with 4
+      const [offset0, offset4] = symbolOffsets[antennaPort];
+  
+      for (let r = 0; r < totalSubcarriers; r++) {
+        if ((r % 6) === (vShift + offset0) % 6) {
+          matrix[r][0] = 1; // Symbol 0
+          matrix[r][7] = 1; // Symbol 7 (copy of 0)
+        }
+        if ((r % 6) === (vShift + offset4) % 6) {
+          matrix[r][4] = 1; // Symbol 4
+          matrix[r][11] = 1; // Symbol 11 (copy of 4)
+        }
+      }
+    } else {
+      // Ports 2 & 3 follow standard mapping, no copying logic needed
+      const indices = symbolIndices[antennaPort as keyof typeof symbolIndices];
+      const offsets = symbolOffsets[antennaPort as keyof typeof symbolOffsets];
+      for (let r = 0; r < totalSubcarriers; r++) {
+        for (let i = 0; i < indices.length; i++) {
+          const c = indices[i];
+          const offset = offsets[i];
+          if ((r % 6) === (vShift + offset) % 6) {
+            matrix[r][c] = 1;
+          }
         }
       }
     }
+  
     return matrix;
   };
 
   const handleGenerate = () => {
     const totalSubcarriers = bandwidthToSubcarriers(bandwidth).subcarriers;
     const matrix = generatePilotMatrix(pci, antennaPort, totalSubcarriers);
+    setPilotMatrix(matrix);
     const pilots: any[] = [];
 
     for (let row = 0; row < matrix.length; row++) {
@@ -183,37 +214,79 @@ const PilotLocations = () => {
       <Image
         src="/pilots.jpeg" // Correct path to the image in the public folder
         alt="Pilot Map"
-        width={1000}
+        width={600}
         height={600}
         className="mx-auto my-4"
       />
-
-      {results.length > 0 && (
-        <table className="w-full border text-sm table-fixed">
-          <thead className="bg-gray-800 text-white">
-            <tr>
-              <th className="border px-3 py-2 text-left">Row (Subcarrier Index)</th>
-              <th className="border px-3 py-2 text-left">Col (Symbol Index)</th>
-              <th className="border px-3 py-2 text-left">Freq (Hz)</th>
-              <th className="border px-3 py-2 text-left">Time (µs)</th>
-              <th className="border px-3 py-2 text-left">Symbol</th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r, idx) => (
-              <tr key={idx} className="border-t">
-                <td className="px-3 py-2">{r.row}</td>
-                <td className="px-3 py-2">{r.col}</td>
-                <td className="px-3 py-2">{r.freq.toFixed(2)}</td>
-                <td className="px-3 py-2">{r.time.toFixed(2)}</td>
-                <td className="px-3 py-2">
-                  {r.symbol.re.toFixed(2)} + {r.symbol.im.toFixed(2)}j
-                </td>
+    {results.length > 0 && pilotMatrix.length > 0 && (
+      <div className="flex flex-col lg:flex-row gap-8 mt-10">
+        {/* Pilot Table */}
+        <div className="w-full lg:w-1/2">
+          <h2 className="text-xl font-semibold mb-2">📋 Pilot Table</h2>
+          <table className="w-full border text-sm table-fixed">
+            <thead className="bg-gray-800 text-white">
+              <tr>
+                <th className="border px-3 py-2 text-left">Row (Subcarrier)</th>
+                <th className="border px-3 py-2 text-left">Col (Symbol)</th>
+                <th className="border px-3 py-2 text-left">Freq (Hz)</th>
+                <th className="border px-3 py-2 text-left">Time (µs)</th>
+                <th className="border px-3 py-2 text-left">Symbol</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {results.map((r, idx) => (
+                <tr key={idx} className="border-t">
+                  <td className="px-3 py-2">{r.row}</td>
+                  <td className="px-3 py-2">{r.col}</td>
+                  <td className="px-3 py-2">{r.freq.toFixed(2)}</td>
+                  <td className="px-3 py-2">{r.time.toFixed(2)}</td>
+                  <td className="px-3 py-2">
+                    {r.symbol.re.toFixed(2)} + {r.symbol.im.toFixed(2)}j
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pilot Grid View */}
+        <div className="w-full lg:w-1/2">
+          <h2 className="text-xl font-semibold mb-2">🧭 Pilot Grid View</h2>
+          <div className="overflow-x-auto border rounded p-4 bg-white text-black">
+            <table className="text-xs table-auto border-collapse">
+              <thead>
+                <tr>
+                  <th className="border px-1 py-1">SubC ↓ / Sym →</th>
+                  {Array.from({ length: pilotMatrix[0].length }, (_, i) => (
+                    <th key={i} className="border px-1 py-1 text-center">{i}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pilotMatrix.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    <td className="border px-1 py-1 font-medium">{rowIndex}</td>
+                    {row.map((val, colIndex) => (
+                      <td
+                        key={colIndex}
+                        className={`border px-2 py-1 text-center ${
+                          val === 1
+                            ? 'bg-red-500 text-white font-bold'
+                            : 'bg-gray-100'
+                        }`}
+                      >
+                        {val}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    )}
+      
         <div className="mt-8 p-6 border rounded bg-gray-800 text-white space-y-4">
             <h2 className="text-xl font-semibold mb-2">📡 Recommended Jamming Strategy</h2>
 
